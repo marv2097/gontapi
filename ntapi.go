@@ -100,8 +100,8 @@ func NtConfigClose()(err error){
 
 
 // Get a stream handle with the stream ID. NT_NET_INTERFACE_PACKET specify that we will receive data in a packet based matter.
-func NtNetRxOpen(name string)(err error){
-	status := C.NT_NetRxOpen(&hNetRx, C.CString(name), C.NT_NET_INTERFACE_PACKET, 1, -1)
+func NtNetRxOpen(name string, stream uint32)(err error){
+	status := C.NT_NetRxOpen(&hNetRx, C.CString(name), C.NT_NET_INTERFACE_PACKET, stream, -1)
 	if status != C.NT_SUCCESS {
 		C.NT_ExplainError(status, &C.errorBuffer[0], 127)
 		err = errors.New("NT NetRxOpen Failed: " + C.GoString(&C.errorBuffer[0]))

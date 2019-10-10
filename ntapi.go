@@ -21,24 +21,46 @@ import (
 
 // Struct to hold NTPL Response data (Basic content)
 type NtplInfoType struct {
-	NtplId 			uint32				// ID of the NTPL command
-	StreamId		int					// The selected stream ID
-	ErrCode			int32				// Ntpl Parser Error code
-	ErrDesc			[]string			// Ntpl Parser Error description
+    NtplId 			        uint32				// ID of the NTPL command
+    StreamId		        int					// The selected stream ID
+    ErrCode			        int32				// Ntpl Parser Error code
+    ErrDesc                 []string			// Ntpl Parser Error description
 }
 
 // Struct to hold the metadata about the capture packet
 type CaptureInfo struct {
-	Timestamp 		time.Time			// Timestamp the packet was captured
-	CaptureLength 	int					// CaptureLength is the total number of bytes read off of the wire.
-	Length 			int					// Length is the size of the original packet.  Should always be >= CaptureLength.
+    Timestamp 		        time.Time			// Timestamp the packet was captured
+    CaptureLength 	        int					// CaptureLength is the total number of bytes read off of the wire.
+    Length 			        int					// Length is the size of the original packet.  Should always be >= CaptureLength.
 }
 
+// Struct to hold the stats for a port - based on C.struct_NtRMON1Counters_s
+type statsPortType struct {
+    DropEvents				uint64				//  (ntapi._Ctype_uint64_t) 0,
+    Octets					uint64				//  (ntapi._Ctype_uint64_t) 63979910,
+    Pkts					uint64				//  (ntapi._Ctype_uint64_t) 294517,
+    BroadcastPkts			uint64				//  (ntapi._Ctype_uint64_t) 0,
+    MulticastPkts			uint64              //  (ntapi._Ctype_uint64_t) 0,
+    CrcAlignErrors  		uint64              //  (ntapi._Ctype_uint64_t) 0,
+    UndersizePkts  			uint64              //  (ntapi._Ctype_uint64_t) 0,
+    OversizePkts  			uint64              //  (ntapi._Ctype_uint64_t) 0,
+    Fragments  				uint64              //  (ntapi._Ctype_uint64_t) 0,
+    Jabbers  				uint64              //  (ntapi._Ctype_uint64_t) 0,
+    Collisions  			uint64              //  (ntapi._Ctype_uint64_t) 0,
+    Pkts64Octets  			uint64              //  (ntapi._Ctype_uint64_t) 1,
+    Pkts65to127Octets  		uint64              //  (ntapi._Ctype_uint64_t) 9463,
+    Pkts128to255Octets  	uint64              //  (ntapi._Ctype_uint64_t) 283717,
+    Pkts256to511Octets  	uint64              //  (ntapi._Ctype_uint64_t) 1156,
+    Pkts512to1023Octets  	uint64              //  (ntapi._Ctype_uint64_t) 157,
+    Pkts1024to1518Octets	uint64              //  (ntapi._Ctype_uint64_t) 20
+}
 
 var hCfgStream C.NtConfigStream_t
+var hStatStream C.NtStatStream_t
 var ntplInfo C.NtNtplInfo_t
 var hNetRx C.NtNetStreamRx_t
 var hNetBuf C.NtNetBuf_t
+var hStat C.NtStatistics_t
 
 
 // Initialise the NTAPI 
@@ -50,6 +72,17 @@ func NtInit()(err error){
 	}
 	return
 } 
+
+
+// Open a Stat stream
+func NtStatOpen(name string)(err error){
+    status := C.NT_StatOpen(&hStatStream, C.CString(name))
+    if status != C.NT_SUCCESS {
+        C.NT_ExplainError(status, &C.errorBuffer[0], 127)
+        err = errors.New("NT Stat Stream Open Failed: " + C.GoString(&C.errorBuffer[0]))
+    }
+    return
+}
 
 
 // Open a configuration
@@ -98,6 +131,60 @@ func NtConfigClose()(err error){
 	return
 }
 
+
+// Clear Stats
+func NtStatClear()(err error){
+    hStat.cmd = C.NT_STATISTICS_READ_CMD_QUERY_V2
+
+    // Configure the Stats to retrieve
+    q_v3_ptr := (*C.struct_NtStatisticsQuery_v2_s)(unsafe.Pointer(&hStat.u))
+    q_v3_ptr.poll = 0
+    q_v3_ptr.clear = 1
+
+    status := C.NT_StatRead(hStatStream, &hStat)
+    if status != C.NT_SUCCESS {
+        C.NT_ExplainError(status, &C.errorBuffer[0], 127)
+        err = errors.New("NT Stat Read Failed: " + C.GoString(&C.errorBuffer[0]))
+    }
+    return 
+}
+
+
+// Read Stats for a port
+func NtStatReadPort(port int)(err error, ntStats statsPortType){
+    hStat.cmd = C.NT_STATISTICS_READ_CMD_QUERY_V2
+
+    // Configure the Stats to retrieve
+    q_v3_ptr := (*C.struct_NtStatisticsQuery_v2_s)(unsafe.Pointer(&hStat.u)) // This has to be cast to access the union
+    q_v3_ptr.poll = 1
+    q_v3_ptr.clear = 0
+
+    status := C.NT_StatRead(hStatStream, &hStat)
+    if status != C.NT_SUCCESS {
+        C.NT_ExplainError(status, &C.errorBuffer[0], 127)
+        err = errors.New("NT Stat Read Failed: " + C.GoString(&C.errorBuffer[0]))
+    }
+
+    // Return the stats by mapping over to our ntStats struct
+    ntStats.DropEvents = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.dropEvents)
+    ntStats.Octets = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.octets)
+    ntStats.Pkts = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.pkts)
+    ntStats.BroadcastPkts = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.broadcastPkts)
+    ntStats.MulticastPkts = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.multicastPkts)
+    ntStats.CrcAlignErrors = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.crcAlignErrors)
+    ntStats.UndersizePkts = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.undersizePkts)
+    ntStats.OversizePkts = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.oversizePkts)
+    ntStats.Fragments = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.fragments)
+    ntStats.Jabbers = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.jabbers)
+    ntStats.Collisions = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.collisions)
+    ntStats.Pkts64Octets = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.pkts64Octets)
+    ntStats.Pkts65to127Octets = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.pkts65to127Octets)
+    ntStats.Pkts128to255Octets = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.pkts128to255Octets)
+    ntStats.Pkts256to511Octets = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.pkts256to511Octets)
+    ntStats.Pkts512to1023Octets = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.pkts512to1023Octets)
+    ntStats.Pkts1024to1518Octets = uint64(q_v3_ptr.data.port.aPorts[port].rx.RMON1.pkts1024to1518Octets)
+    return 
+}
 
 // Get a stream handle with the stream ID. NT_NET_INTERFACE_PACKET specify that we will receive data in a packet based matter.
 func NtNetRxOpen(name string, stream uint32)(err error){

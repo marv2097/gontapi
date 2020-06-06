@@ -59,7 +59,7 @@ func main() {
     }
 
     // Open config
-    if err := ntapi.NtNetRxOpen("config"); err != nil {
+    if err := ntapi.NtNetRxOpen("config", 1); err != nil {
         log.Fatalln(err)
     }
 
